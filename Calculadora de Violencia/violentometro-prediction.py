@@ -646,7 +646,7 @@ def entrenar(n_arboles):
     ESTADO["metricas"] = {
         "accuracy":  float(f"{acc  * 100:.2f}"),
         "precision": float(f"{prec * 100:.2f}"),
-        "recall":    float(f"{rec  * 100:.2f}"),
+        "recall":    float(f"{rec * 100:.2f}"),
         "f1":        float(f"{f1   * 100:.2f}"),
         "reporte": rep,
     }
@@ -1387,23 +1387,115 @@ def _puntaje_por_tipo(data, le, proba_modelo):
 
 
 def _indicadores_activados(data):
+    """
+    Selecciona hasta 15 indicadores que MEJOR se ajusten a las respuestas del test.
+    A diferencia de la versión anterior, NO se queda con los primeros tipos
+    ordenados por peso, sino que puntúa cada indicador según:
+      1. El peso real del tipo/categoría a la que pertenece (activaciones / total).
+      2. La intensidad de las respuestas en las preguntas asociadas a ese tipo.
+      3. Un pequeño factor de diversidad para no saturar con un solo tipo.
+    Luego elige los 15 indicadores con mayor puntaje, garantizando variación
+    según las respuestas.
+    """
+    pregunta_a_tipos = ESTADO["pregunta_a_tipos"]
+    tipos_unicos = ESTADO["tipos_unicos"]
+
+    # ---------- 1. Calcular activaciones por tipo (igual que antes) ----------
     activaciones_por_tipo = defaultdict(int)
+    total_preguntas_por_tipo = defaultdict(int)
+
+    for p in ESTADO["preguntas_test"]:
+        for t in p["tipos"]:
+            total_preguntas_por_tipo[t] += 1
+
     for c, val in data.items():
-        if val >= 2:
-            for t in ESTADO["pregunta_a_tipos"].get(c, []):
+        if val >= 1:                     # incluir "Una vez" para dar matices
+            for t in pregunta_a_tipos.get(c, []):
                 activaciones_por_tipo[t] += val
 
-    tipos_ordenados = sorted(activaciones_por_tipo.items(), key=lambda kv: -kv[1])
-    resultado = []
-    vistos = set()
-    for tipo, _peso in tipos_ordenados:
-        for ind in ESTADO["indicadores_catalogo"]:
-            if tipo in ind["tipos"] and ind["id"] not in vistos:
-                resultado.append(ind)
-                vistos.add(ind["id"])
-                if len(resultado) >= 15:
-                    return resultado
-    return resultado
+    # ---------- 2. Normalizar peso por tipo ----------
+    peso_por_tipo = {}
+    for t in tipos_unicos:
+        total = total_preguntas_por_tipo.get(t, 0)
+        if total > 0:
+            # intensidad máxima posible: 4 (Actualmente) * total
+            peso_por_tipo[t] = min(1.0, activaciones_por_tipo.get(t, 0) / (4.0 * total))
+        else:
+            peso_por_tipo[t] = 0.0
+
+    # ---------- 3. Puntuar cada indicador ----------
+    puntajes_indicadores = []
+
+    for ind in ESTADO["indicadores_catalogo"]:
+        tipos_ind = ind["tipos"]
+        if not tipos_ind:
+            continue
+
+        # peso base: promedio de pesos de los tipos que cubre el indicador
+        peso_tipos = [peso_por_tipo.get(t, 0.0) for t in tipos_ind]
+        peso_promedio = sum(peso_tipos) / len(peso_tipos) if peso_tipos else 0.0
+
+        # si el indicador no toca ningún tipo con activación, se descarta
+        if peso_promedio <= 0.0:
+            continue
+
+        # factor de especificidad: indicadores cuyo tipo principal está más activado
+        peso_max = max(peso_tipos) if peso_tipos else 0.0
+
+        # factor de categoría: cuánto se activó la categoría del indicador
+        cat_num = ind.get("categoria_num", 0)
+        tipos_cat = ESTADO["mapa_categoria_a_tipos"].get(cat_num, [])
+        activaciones_cat = sum(activaciones_por_tipo.get(t, 0) for t in tipos_cat)
+        total_cat = sum(total_preguntas_por_tipo.get(t, 0) for t in tipos_cat)
+        peso_categoria = min(1.0, activaciones_cat / (4.0 * total_cat)) if total_cat else 0.0
+
+        # PUNTAJE FINAL del indicador
+        puntaje = (
+            0.50 * peso_max +          # qué tan activado está el tipo principal
+            0.30 * peso_promedio +     # cobertura de tipos
+            0.20 * peso_categoria      # relevancia de la categoría completa
+        )
+
+        # Pequeño bonus si alguna respuesta fue "Actualmente" (valor 4) en una
+        # pregunta directamente vinculada al tipo principal del indicador.
+        tipos_set = set(tipos_ind)
+        for c, val in data.items():
+            if val >= 4 and tipos_set.intersection(pregunta_a_tipos.get(c, [])):
+                puntaje += 0.05
+                break
+
+        puntajes_indicadores.append((puntaje, ind))
+
+    # ---------- 4. Ordenar y seleccionar top 15 con diversidad ----------
+    puntajes_indicadores.sort(key=lambda x: -x[0])
+
+    seleccionados = []
+    vistos_ids = set()
+    # Primera pasada: máximo 3 indicadores por categoría para garantizar variedad
+    conteo_categoria = defaultdict(int)
+    for puntaje, ind in puntajes_indicadores:
+        cat = ind.get("categoria_num", 0)
+        if ind["id"] in vistos_ids:
+            continue
+        if conteo_categoria[cat] >= 3:
+            continue
+        seleccionados.append(ind)
+        vistos_ids.add(ind["id"])
+        conteo_categoria[cat] += 1
+        if len(seleccionados) >= 15:
+            break
+
+    # Segunda pasada: si aún no hay 15, completar con los mejores restantes
+    if len(seleccionados) < 15:
+        for puntaje, ind in puntajes_indicadores:
+            if ind["id"] in vistos_ids:
+                continue
+            seleccionados.append(ind)
+            vistos_ids.add(ind["id"])
+            if len(seleccionados) >= 15:
+                break
+
+    return seleccionados
 
 
 @app.route("/predecir", methods=["POST"])
