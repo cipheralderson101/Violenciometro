@@ -4,7 +4,7 @@ Lee los 3 JSON desde ./datasets/ (violentometro, tipos, indicadores).
 El test de victimización está embebido en el script y NO se sube.
 
 Portable: se puede ejecutar desde cualquier carpeta. Genera automáticamente:
-    ./datasets/   ./modelos/   ./reportes/   ./respaldos/
+    ./datasets/   ./modelos/   ./reportes/   ./respaldos/   ./datasets_created/
 
 Los porcentajes se muestran siempre con 2 decimales.
 Se incluye el violentómetro oficial del IPN en la interfaz.
@@ -43,12 +43,14 @@ from flask import (
 # ============================================================
 BASE_DIR = Path(__file__).resolve().parent
 
-RUTA_DATOSETS  = BASE_DIR / "datasets"
-RUTA_MODELOS   = BASE_DIR / "modelos"
-RUTA_REPORTES  = BASE_DIR / "reportes"
-RUTA_RESPALDO  = BASE_DIR / "respaldos"
+RUTA_DATOSETS       = BASE_DIR / "datasets"
+RUTA_MODELOS        = BASE_DIR / "modelos"
+RUTA_REPORTES       = BASE_DIR / "reportes"
+RUTA_RESPALDO       = BASE_DIR / "respaldos"
+RUTA_DATASETS_GEN   = BASE_DIR / "datasets_created"
 
-for r in (BASE_DIR, RUTA_DATOSETS, RUTA_MODELOS, RUTA_REPORTES, RUTA_RESPALDO):
+for r in (BASE_DIR, RUTA_DATOSETS, RUTA_MODELOS, RUTA_REPORTES,
+          RUTA_RESPALDO, RUTA_DATASETS_GEN):
     r.mkdir(parents=True, exist_ok=True)
 
 ARCH_VIOLENTOMETRO = RUTA_DATOSETS / "violentometro.json"
@@ -404,7 +406,7 @@ def canonizar_tipo(nombre):
         "emocional": "emocional",
         "social": "social",
         "espiritual o religiosa": "religiosa",
-        "por prejuicio racial o étnico": "racial_etnico",
+        "por prejuicio racial o étnico": "racial_etico",
         "xenófoba contra las mujeres": "xenofoba",
         "contra mujeres indígenas": "indigenas",
         "contra mujeres migrantes o refugiadas": "migrantes",
@@ -590,6 +592,54 @@ def construir_dataset_entrenamiento(n_por_tipo=500):
 
 
 # ============================================================
+# 6b. GUARDADO DEL DATASET GENERADO EN ./datasets_created/
+# ============================================================
+def guardar_dataset_generado(df, n_por_tipo):
+    """
+    Guarda el dataset sintético en ./datasets_created/ en formato JSON
+    (más el metadata y una copia con timestamp en ./datasets_created/respaldos/).
+    Devuelve un dict con las rutas escritas.
+    """
+    RUTA_DATASETS_GEN.mkdir(parents=True, exist_ok=True)
+    respaldos_dir = RUTA_DATASETS_GEN / "respaldos"
+    respaldos_dir.mkdir(parents=True, exist_ok=True)
+
+    marca = time.strftime("%Y%m%d_%H%M%S")
+    rutas = {}
+
+    # --- 1) JSON "último" (se sobrescribe cada vez que se entrena) ---
+    json_path = RUTA_DATASETS_GEN / "dataset_sintetico.json"
+    df.to_json(json_path, orient="records", indent=2, force_ascii=False)
+    rutas["json"] = json_path
+
+    # --- 2) Metadatos del dataset ---
+    meta = {
+        "generado_en": marca,
+        "filas": int(df.shape[0]),
+        "columnas_features": int(df.shape[1] - 1),
+        "n_por_tipo": int(n_por_tipo),
+        "distribucion_target": dict(Counter(df["target"])),
+        "columnas": [c for c in df.columns if c != "target"],
+        "semilla_numpy": 42,
+        "semilla_sklearn": 42,
+        "version_script": "violentometro-prediction.py",
+    }
+    meta_path = RUTA_DATASETS_GEN / "dataset_sintetico_metadata.json"
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    rutas["metadata"] = meta_path
+
+    # --- 3) Copia con timestamp en ./datasets_created/respaldos/ ---
+    try:
+        shutil.copy2(json_path, respaldos_dir / f"dataset_sintetico_{marca}.json")
+        rutas["respaldo_json"] = respaldos_dir / f"dataset_sintetico_{marca}.json"
+    except Exception as e:
+        log(f"⚠️ No se pudo respaldar el dataset: {e}")
+
+    return rutas
+
+
+# ============================================================
 # 7. ENTRENAMIENTO
 # ============================================================
 def entrenar(n_arboles):
@@ -598,6 +648,18 @@ def entrenar(n_arboles):
     cols = ESTADO["columnas_features"]
     X = df[cols].copy()
     y = df["target"].copy()
+
+    # --- NUEVO: guardar el dataset generado en ./datasets_created/ (JSON) ---
+    try:
+        rutas_ds = guardar_dataset_generado(df, n_por_tipo=500)
+        log(f"💾 Dataset guardado en {RUTA_DATASETS_GEN}")
+        log(f"   - JSON:   {rutas_ds['json'].name}")
+        log(f"   - Meta:   {rutas_ds['metadata'].name}")
+        if "respaldo_json" in rutas_ds:
+            log(f"   - Respaldo con timestamp: respaldos/{rutas_ds['respaldo_json'].name}")
+    except Exception as e:
+        log(f"⚠️ No se pudo guardar el dataset generado: {e}")
+        traceback.print_exc()
 
     log(f"Dataset: {X.shape[0]} filas × {X.shape[1]} features")
     log(f"Distribución de clases: {dict(Counter(y))}")
@@ -790,6 +852,24 @@ def construir_resumen_datasets():
             "tipo": "sintético",
             "estado": "se genera al entrenar",
         }
+
+    # --- NUEVO: reflejar ./datasets_created/ en el resumen ---
+    try:
+        if RUTA_DATASETS_GEN.exists():
+            archivos_gen = sorted([p.name for p in RUTA_DATASETS_GEN.iterdir() if p.is_file()])
+            respaldos_gen = []
+            rd = RUTA_DATASETS_GEN / "respaldos"
+            if rd.exists():
+                respaldos_gen = sorted([p.name for p in rd.iterdir() if p.is_file()])
+            resumen["datasets_created/"] = {
+                "tipo": "salida del entrenamiento",
+                "ruta": str(RUTA_DATASETS_GEN),
+                "archivos": archivos_gen,
+                "respaldos_con_timestamp": len(respaldos_gen),
+                "ultimo_respaldo": respaldos_gen[-1] if respaldos_gen else "(ninguno)",
+            }
+    except Exception as e:
+        resumen["datasets_created/"] = {"error": str(e)}
 
     ESTADO["resumen_datasets"] = resumen
     return resumen
@@ -1023,11 +1103,21 @@ HTML_PANEL = """
       {% else %}
       <ul class="lista-resumen">
         {% for k, v in meta.items() %}
-          {% if k not in ('detalle','detalle_niveles','target_distribucion','error') %}
+          {% if k not in ('detalle','detalle_niveles','target_distribucion','error','archivos') %}
           <li><b>{{ k }}:</b> {{ v }}</li>
           {% endif %}
         {% endfor %}
       </ul>
+      {% if meta.archivos %}
+      <details style="margin-top:10px;">
+        <summary>Ver archivos en datasets_created/</summary>
+        <ul class="lista-resumen" style="margin-top:8px;">
+          {% for a in meta.archivos %}
+          <li>{{ a }}</li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
       {% if meta.detalle_niveles %}
       <details style="margin-top:10px;">
         <summary>Ver niveles del violentómetro</summary>
@@ -1618,6 +1708,7 @@ if __name__ == "__main__":
     print(f"📁 Modelos:  {RUTA_MODELOS}")
     print(f"📁 Reportes: {RUTA_REPORTES}")
     print(f"📁 Respaldos:{RUTA_RESPALDO}")
+    print(f"📁 Datasets generados: {RUTA_DATASETS_GEN}")
 
     faltan = archivos_faltantes()
     if faltan:
