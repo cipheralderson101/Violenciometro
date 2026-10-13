@@ -5,7 +5,7 @@ El test de victimización está embebido en el script y NO se sube.
 
 Portable: se ejecuta desde cualquier carpeta y trabaja SIEMPRE en la carpeta
 actual (Path.cwd()). Crea automáticamente, junto a donde se ejecute:
-    ./datasets/   ./modelos/   ./reportes/   ./respaldos/   ./datasets_created/
+    ./datasets/   ./modelos/   ./reportes/   ./respaldos/   ./violence-datasets/
 
 Los porcentajes se muestran siempre con 2 decimales.
 Se incluye el violentómetro oficial del IPN en la interfaz.
@@ -48,7 +48,7 @@ RUTA_DATOSETS       = BASE_DIR / "datasets"
 RUTA_MODELOS        = BASE_DIR / "modelos"
 RUTA_REPORTES       = BASE_DIR / "reportes"
 RUTA_RESPALDO       = BASE_DIR / "respaldos"
-RUTA_DATASETS_GEN   = BASE_DIR / "datasets_created"
+RUTA_DATASETS_GEN   = BASE_DIR / "violence-datasets"
 
 for r in (RUTA_DATOSETS, RUTA_MODELOS, RUTA_REPORTES, RUTA_RESPALDO, RUTA_DATASETS_GEN):
     r.mkdir(parents=True, exist_ok=True)
@@ -77,6 +77,12 @@ VALORES = {
     "Actualmente": 4,
     "Prefiero no responder": 0,
 }
+
+VALORES_INVERSOS = {v: k for k, v in VALORES.items()}
+VALORES_INVERSOS[0] = "Nunca"
+
+VERDADERO = "Verdadero"
+FALSO     = "Falso"
 
 # ============================================================
 # 2. TEST EMBEBIDO (100 preguntas)
@@ -327,6 +333,7 @@ ESTADO = {
     "mapa_categoria_a_tipos": None,
     "preguntas_test": None,
     "pregunta_a_tipos": None,
+    "pregunta_texto": None,
     "columnas_features": None,
     "preprocesador": None,
     "modelo": None,
@@ -500,6 +507,7 @@ def cargar_json():
 
     preguntas = []
     pregunta_a_tipos = {}
+    pregunta_texto = {}
     for s in SECCIONES_TEST:
         sec_code = s["seccion"]
         tipo_sec = s["tipo"]
@@ -515,8 +523,10 @@ def cargar_json():
                 "tipos": tipos,
             })
             pregunta_a_tipos[f"p{num}"] = tipos
+            pregunta_texto[f"p{num}"] = p["texto"]
     ESTADO["preguntas_test"] = preguntas
     ESTADO["pregunta_a_tipos"] = pregunta_a_tipos
+    ESTADO["pregunta_texto"] = pregunta_texto
 
     vio = ESTADO["violentometro"]["violentometro"]
     colores_map = {
@@ -549,9 +559,13 @@ def cargar_json():
 
 
 # ============================================================
-# 6. DATASET DE ENTRENAMIENTO SINTÉTICO
+# 6. DATASET DE ENTRENAMIENTO SINTÉTICO (MASIVO + VERDADERO/FALSO)
 # ============================================================
-def construir_dataset_entrenamiento(n_por_tipo=500):
+def construir_dataset_entrenamiento(n_por_tipo=3000):
+    """
+    Genera un dataset sintético MASIVO con valores nominales
+    ("Verdadero" / "Falso") por pregunta.
+    """
     preguntas = ESTADO["preguntas_test"]
     categorias_entrenamiento = ["psicologica", "fisica", "sexual", "economica", "patrimonial", "vicaria"]
     columnas = [f"p{p['numero']}" for p in preguntas]
@@ -562,24 +576,17 @@ def construir_dataset_entrenamiento(n_por_tipo=500):
     for cat in categorias_entrenamiento:
         preguntas_cat = [c for c in columnas if cat in pregunta_a_tipos.get(c, [])]
         preguntas_otras = [c for c in columnas if c not in preguntas_cat]
+
         for _ in range(n_por_tipo):
             fila = {}
             for c in preguntas_cat:
-                r = rng.random()
-                if r < 0.55:
-                    fila[c] = int(rng.integers(3, 5))
-                elif r < 0.85:
-                    fila[c] = int(rng.integers(2, 4))
-                else:
-                    fila[c] = int(rng.integers(0, 3))
+                fila[c] = VERDADERO if rng.random() < 0.85 else FALSO
             for c in preguntas_otras:
-                r = rng.random()
-                if r < 0.75:
-                    fila[c] = 0
-                elif r < 0.92:
-                    fila[c] = 1
-                else:
-                    fila[c] = int(rng.integers(0, 3))
+                fila[c] = VERDADERO if rng.random() < 0.15 else FALSO
+
+            if all(fila[c] == FALSO for c in preguntas_cat):
+                fila[rng.choice(preguntas_cat)] = VERDADERO
+
             registros.append(fila)
             etiquetas.append(cat)
 
@@ -592,14 +599,139 @@ def construir_dataset_entrenamiento(n_por_tipo=500):
 
 
 # ============================================================
-# 6b. GUARDADO DEL DATASET GENERADO EN ./datasets_created/
+# 6b. UTILIDADES PARA METADATOS Y ETIQUETAS DERIVADAS
+# ============================================================
+def _es_columna_pregunta(col):
+    """Devuelve True si `col` es una columna de pregunta real (p + dígitos)."""
+    return (
+        isinstance(col, str)
+        and col.startswith("p")
+        and len(col) > 1
+        and col[1:].isdigit()
+    )
+
+
+def _valor_a_etiqueta(v):
+    if isinstance(v, str):
+        return v if v in (VERDADERO, FALSO) else FALSO
+    if v == 0:
+        return FALSO
+    if v == 1:
+        return VERDADERO
+    if v >= 2:
+        return VERDADERO
+    return FALSO
+
+
+def _nombre_oficial_tipo(canon):
+    info = ESTADO["mapa_tipos_json"].get(canon)
+    if info:
+        return info.get("nombre", canon)
+    return canon.replace("_", " ").capitalize()
+
+
+def _categoria_oficial_tipo(canon):
+    info = ESTADO["mapa_tipos_json"].get(canon)
+    if not info:
+        return ""
+    numero = info.get("numero")
+    if numero is None:
+        return ""
+    for s in ESTADO["tipos_violencia"]["lista_integral_tipos_violencia_contra_mujeres"]["secciones"]:
+        for t in s["tipos"]:
+            if t.get("numero") == numero:
+                return s.get("titulo", "")
+    return ""
+
+
+def _definicion_oficial_tipo(canon):
+    info = ESTADO["mapa_tipos_json"].get(canon)
+    if not info:
+        return ""
+    return info.get("definicion", "")
+
+
+def _derivar_target(fila_dict):
+    """
+    Deriva el veredicto (target) a partir del PATRÓN de respuestas
+    Verdadero/Falso de una fila.
+    """
+    pregunta_a_tipos = ESTADO["pregunta_a_tipos"]
+    tipos_unicos = ESTADO["tipos_unicos"]
+
+    total_por_tipo = defaultdict(int)
+    for col, tipos in pregunta_a_tipos.items():
+        for t in tipos:
+            total_por_tipo[t] += 1
+
+    activaciones = defaultdict(int)
+    for col, val in fila_dict.items():
+        if not _es_columna_pregunta(col):
+            continue
+        if val != VERDADERO:
+            continue
+        for t in pregunta_a_tipos.get(col, []):
+            activaciones[t] += 1
+
+    densidad = {}
+    for t in tipos_unicos:
+        total = total_por_tipo.get(t, 0)
+        densidad[t] = (activaciones[t] / total) if total else 0.0
+
+    ordenados = sorted(
+        tipos_unicos,
+        key=lambda t: (-densidad[t], -activaciones[t], t)
+    )
+    tipo_mas_activado = ordenados[0] if ordenados else "psicologica"
+    tipos_activados = sorted(
+        [t for t in tipos_unicos if activaciones[t] > 0],
+        key=lambda t: (-densidad[t], -activaciones[t])
+    )
+
+    return (
+        tipo_mas_activado,
+        _nombre_oficial_tipo(tipo_mas_activado),
+        _categoria_oficial_tipo(tipo_mas_activado),
+        _definicion_oficial_tipo(tipo_mas_activado),
+        tipo_mas_activado,
+        tipos_activados,
+    )
+
+
+def _resumen_por_pregunta(df, tipo_objetivo):
+    """
+    Devuelve metadatos agregados por pregunta para un subconjunto.
+    SOLO procesa columnas que sean preguntas reales (p + dígitos).
+    """
+    pregunta_texto = ESTADO["pregunta_texto"]
+    pregunta_a_tipos = ESTADO["pregunta_a_tipos"]
+    resumen = []
+    for col in df.columns:
+        if not _es_columna_pregunta(col):
+            continue
+        num = col[1:]
+        tipos_p = pregunta_a_tipos.get(col, [])
+        serie = df[col]
+        total = int(serie.shape[0])
+        verdaderos = int((serie == VERDADERO).sum())
+        porcentaje = round((verdaderos / total * 100) if total else 0.0, 2)
+        resumen.append({
+            "numero": int(num),
+            "pregunta": pregunta_texto.get(col, ""),
+            "tipos_pregunta": tipos_p,
+            "corresponde_al_tipo": (tipo_objetivo in tipos_p) if tipo_objetivo else None,
+            "total_respuestas": total,
+            "verdaderos": verdaderos,
+            "porcentaje_verdadero": porcentaje,
+        })
+    resumen.sort(key=lambda x: x["numero"])
+    return resumen
+
+
+# ============================================================
+# 6c. GUARDADO DEL DATASET COMPLETO EN ./violence-datasets/
 # ============================================================
 def guardar_dataset_generado(df, n_por_tipo):
-    """
-    Guarda el dataset sintético en ./datasets_created/ en formato JSON
-    (más el metadata y una copia con timestamp en ./datasets_created/respaldos/).
-    Devuelve un dict con las rutas escritas.
-    """
     RUTA_DATASETS_GEN.mkdir(parents=True, exist_ok=True)
     respaldos_dir = RUTA_DATASETS_GEN / "respaldos"
     respaldos_dir.mkdir(parents=True, exist_ok=True)
@@ -607,29 +739,87 @@ def guardar_dataset_generado(df, n_por_tipo):
     marca = time.strftime("%Y%m%d_%H%M%S")
     rutas = {}
 
-    # --- 1) JSON "último" (se sobrescribe cada vez que se entrena) ---
+    registros_enriquecidos = []
+    for _, fila in df.iterrows():
+        fila_dict = fila.to_dict()
+        (
+            target_canon,
+            target_label,
+            target_categoria,
+            target_definicion,
+            _tipo_mas_activado,
+            tipos_activados,
+        ) = _derivar_target(fila_dict)
+
+        registro = {c: fila_dict[c] for c in df.columns if _es_columna_pregunta(c)}
+        registro["target"]              = target_canon
+        registro["target_label"]        = target_label
+        registro["target_categoria"]    = target_categoria
+        registro["target_definicion"]   = target_definicion
+        registro["tipos_activados"]     = tipos_activados
+        registro["nivel_activacion"]    = len(tipos_activados)
+        registros_enriquecidos.append(registro)
+
+    df_enriquecido = pd.DataFrame(registros_enriquecidos)
+
     json_path = RUTA_DATASETS_GEN / "dataset_sintetico.json"
-    df.to_json(json_path, orient="records", indent=2, force_ascii=False)
+    df_enriquecido.to_json(json_path, orient="records", indent=2, force_ascii=False)
     rutas["json"] = json_path
 
-    # --- 2) Metadatos del dataset ---
+    distribucion = dict(Counter(df_enriquecido["target"]))
+    distribucion_label = dict(Counter(df_enriquecido["target_label"]))
+    total_filas = int(df_enriquecido.shape[0])
+    total_cols = 100
+
+    cobertura_por_tipo = {}
+    for t in distribucion.keys():
+        preguntas_t = [
+            c for c in df.columns if _es_columna_pregunta(c)
+            and t in ESTADO["pregunta_a_tipos"].get(c, [])
+        ]
+        cobertura_por_tipo[t] = {
+            "nombre_oficial": _nombre_oficial_tipo(t),
+            "categoria_oficial": _categoria_oficial_tipo(t),
+            "definicion_oficial": _definicion_oficial_tipo(t),
+            "preguntas_correspondientes": len(preguntas_t),
+            "porcentaje_del_test": round(len(preguntas_t) / total_cols * 100, 2),
+        }
+
     meta = {
         "generado_en": marca,
-        "filas": int(df.shape[0]),
-        "columnas_features": int(df.shape[1] - 1),
+        "filas": total_filas,
+        "columnas_features": total_cols,
         "n_por_tipo": int(n_por_tipo),
-        "distribucion_target": dict(Counter(df["target"])),
-        "columnas": [c for c in df.columns if c != "target"],
+        "escala_nominal": [VERDADERO, FALSO],
+        "distribucion_target_canonico": distribucion,
+        "distribucion_target_label": distribucion_label,
+        "tipos_derivados": list(distribucion.keys()),
+        "cobertura_por_tipo": cobertura_por_tipo,
+        "campos_derivados": [
+            "target", "target_label", "target_categoria",
+            "target_definicion", "tipos_activados", "nivel_activacion"
+        ],
         "semilla_numpy": 42,
         "semilla_sklearn": 42,
         "version_script": "violentometro-prediction.py",
+        "formato": "p1..p100 (Verdadero/Falso) + target + metadatos derivados",
     }
     meta_path = RUTA_DATASETS_GEN / "dataset_sintetico_metadata.json"
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
     rutas["metadata"] = meta_path
 
-    # --- 3) Copia con timestamp en ./datasets_created/respaldos/ ---
+    resumen_preguntas = {
+        "generado_en": marca,
+        "filas": total_filas,
+        "columnas_features": total_cols,
+        "preguntas": _resumen_por_pregunta(df, tipo_objetivo=None),
+    }
+    resumen_path = RUTA_DATASETS_GEN / "dataset_sintetico_resumen.json"
+    with open(resumen_path, "w", encoding="utf-8") as f:
+        json.dump(resumen_preguntas, f, ensure_ascii=False, indent=2)
+    rutas["resumen"] = resumen_path
+
     try:
         shutil.copy2(json_path, respaldos_dir / f"dataset_sintetico_{marca}.json")
         rutas["respaldo_json"] = respaldos_dir / f"dataset_sintetico_{marca}.json"
@@ -640,26 +830,158 @@ def guardar_dataset_generado(df, n_por_tipo):
 
 
 # ============================================================
+# 6d. GUARDADO DE DATASETS INDIVIDUALES POR TIPO DE VIOLENCIA
+# ============================================================
+def guardar_datasets_por_violencia(df):
+    base_dir = RUTA_DATASETS_GEN / "por_violencia"
+    respaldos_dir = base_dir / "respaldos"
+    base_dir.mkdir(parents=True, exist_ok=True)
+    respaldos_dir.mkdir(parents=True, exist_ok=True)
+
+    marca = time.strftime("%Y%m%d_%H%M%S")
+    rutas = {}
+
+    registros_enriquecidos = []
+    for _, fila in df.iterrows():
+        fila_dict = fila.to_dict()
+        (
+            target_canon,
+            target_label,
+            target_categoria,
+            target_definicion,
+            _,
+            tipos_activados,
+        ) = _derivar_target(fila_dict)
+        registro = {c: fila_dict[c] for c in df.columns if _es_columna_pregunta(c)}
+        registro["target"]            = target_canon
+        registro["target_label"]      = target_label
+        registro["target_categoria"]  = target_categoria
+        registro["target_definicion"] = target_definicion
+        registro["tipos_activados"]   = tipos_activados
+        registro["nivel_activacion"]  = len(tipos_activados)
+        registros_enriquecidos.append(registro)
+
+    df_enriq = pd.DataFrame(registros_enriquecidos)
+
+    for tipo in sorted(df_enriq["target"].unique()):
+        sub = df_enriq[df_enriq["target"] == tipo].reset_index(drop=True)
+
+        json_path = base_dir / f"{tipo}.json"
+        sub.to_json(json_path, orient="records", indent=2, force_ascii=False)
+        rutas[tipo] = json_path
+
+        total_filas = int(sub.shape[0])
+        total_cols = 100
+
+        columnas_preguntas = [c for c in sub.columns if _es_columna_pregunta(c)]
+        preguntas_tipo = [
+            c for c in columnas_preguntas
+            if tipo in ESTADO["pregunta_a_tipos"].get(c, [])
+        ]
+        preguntas_otras = [c for c in columnas_preguntas if c not in preguntas_tipo]
+
+        def _densidad(cols):
+            if not cols:
+                return 0.0
+            return round(
+                float((sub[cols] == VERDADERO).sum().sum())
+                / (sub.shape[0] * len(cols)) * 100,
+                2,
+            )
+
+        coocurrencia = Counter()
+        for lst in sub["tipos_activados"]:
+            for t in lst:
+                if t != tipo:
+                    coocurrencia[t] += 1
+
+        meta = {
+            "tipo_violencia_canonico": tipo,
+            "tipo_violencia_label": _nombre_oficial_tipo(tipo),
+            "categoria_oficial": _categoria_oficial_tipo(tipo),
+            "definicion_oficial": _definicion_oficial_tipo(tipo),
+            "generado_en": marca,
+            "filas": total_filas,
+            "columnas_features": total_cols,
+            "escala_nominal": [VERDADERO, FALSO],
+            "preguntas_del_tipo": len(preguntas_tipo),
+            "preguntas_de_otros_tipos": len(preguntas_otras),
+            "densidad_verdadero_en_preguntas_del_tipo_%": _densidad(preguntas_tipo),
+            "densidad_verdadero_en_preguntas_otras_%": _densidad(preguntas_otras),
+            "coocurrencia_con_otros_tipos": dict(coocurrencia.most_common()),
+            "campos_derivados": [
+                "target", "target_label", "target_categoria",
+                "target_definicion", "tipos_activados", "nivel_activacion"
+            ],
+            "formato": "p1..p100 (Verdadero/Falso) + target + metadatos derivados",
+            "version_script": "violentometro-prediction.py",
+        }
+        meta_path = base_dir / f"{tipo}_metadata.json"
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+
+        resumen = {
+            "tipo_violencia_canonico": tipo,
+            "tipo_violencia_label": _nombre_oficial_tipo(tipo),
+            "categoria_oficial": _categoria_oficial_tipo(tipo),
+            "definicion_oficial": _definicion_oficial_tipo(tipo),
+            "generado_en": marca,
+            "filas": total_filas,
+            "columnas_features": total_cols,
+            "preguntas": _resumen_por_pregunta(sub, tipo_objetivo=tipo),
+        }
+        resumen_path = base_dir / f"{tipo}_resumen.json"
+        with open(resumen_path, "w", encoding="utf-8") as f:
+            json.dump(resumen, f, ensure_ascii=False, indent=2)
+
+        try:
+            shutil.copy2(json_path, respaldos_dir / f"{tipo}_{marca}.json")
+        except Exception as e:
+            log(f"⚠️ No se pudo respaldar dataset de {tipo}: {e}")
+
+    return rutas
+
+
+# ============================================================
 # 7. ENTRENAMIENTO
 # ============================================================
 def entrenar(n_arboles):
-    log("Generando dataset de entrenamiento a partir de los JSON...")
-    df = construir_dataset_entrenamiento(n_por_tipo=500)
-    cols = ESTADO["columnas_features"]
-    X = df[cols].copy()
-    y = df["target"].copy()
+    log("Generando dataset de entrenamiento MASIVO (Verdadero/Falso)...")
+    N_POR_TIPO = 3000
+    df = construir_dataset_entrenamiento(n_por_tipo=N_POR_TIPO)
 
-    # --- NUEVO: guardar el dataset generado en ./datasets_created/ (JSON) ---
     try:
-        rutas_ds = guardar_dataset_generado(df, n_por_tipo=500)
-        log(f"💾 Dataset guardado en {rutas_ds['json'].parent.name}/")
-        log(f"   - JSON:   {rutas_ds['json'].name}")
-        log(f"   - Meta:   {rutas_ds['metadata'].name}")
+        rutas_ds = guardar_dataset_generado(df, n_por_tipo=N_POR_TIPO)
+        log(f"💾 Dataset MASIVO guardado en {rutas_ds['json'].parent.name}/")
+        log(f"   - JSON:    {rutas_ds['json'].name}")
+        log(f"   - Meta:    {rutas_ds['metadata'].name}")
+        log(f"   - Resumen: {rutas_ds['resumen'].name}")
+        log(f"   - Filas:   {df.shape[0]}")
         if "respaldo_json" in rutas_ds:
-            log(f"   - Respaldo con timestamp: respaldos/{rutas_ds['respaldo_json'].name}")
+            log(f"   - Respaldo: respaldos/{rutas_ds['respaldo_json'].name}")
     except Exception as e:
         log(f"⚠️ No se pudo guardar el dataset generado: {e}")
         traceback.print_exc()
+
+    try:
+        rutas_por_violencia = guardar_datasets_por_violencia(df)
+        log(f"💾 Datasets MASIVOS por violencia derivada: {len(rutas_por_violencia)}")
+        for tipo_v, ruta_v in rutas_por_violencia.items():
+            log(f"   - {tipo_v}: {ruta_v.name}")
+    except Exception as e:
+        log(f"⚠️ No se pudieron guardar los datasets por violencia: {e}")
+        traceback.print_exc()
+
+    df_cod = df.copy()
+    for c in df_cod.columns:
+        if c == "target":
+            continue
+        if _es_columna_pregunta(c):
+            df_cod[c] = df_cod[c].map(lambda v: 1 if v == VERDADERO else 0)
+
+    cols = ESTADO["columnas_features"]
+    X = df_cod[cols].copy()
+    y = df_cod["target"].copy()
 
     log(f"Dataset: {X.shape[0]} filas × {X.shape[1]} features")
     log(f"Distribución de clases: {dict(Counter(y))}")
@@ -713,7 +1035,6 @@ def entrenar(n_arboles):
         "reporte": rep,
     }
 
-    # Asegurar carpeta y guardar
     RUTA_MODELOS.mkdir(parents=True, exist_ok=True)
     joblib.dump(rf,     ARCH_MODELO)
     joblib.dump(le,     ARCH_LABEL)
@@ -722,6 +1043,7 @@ def entrenar(n_arboles):
         "columnas_features": cols,
         "clases": list(le.classes_),
         "pregunta_a_tipos": ESTADO["pregunta_a_tipos"],
+        "pregunta_texto": ESTADO["pregunta_texto"],
         "metricas": ESTADO["metricas"],
     }, ARCH_METADATA)
 
@@ -746,10 +1068,6 @@ def entrenar(n_arboles):
 # 7b. CARGA AUTOMÁTICA DEL MODELO DESDE DISCO
 # ============================================================
 def cargar_modelo_si_existe():
-    """
-    Si los .joblib existen en ./modelos/, los carga y marca entrenado=True.
-    Así /test funciona sin reentrenar tras reiniciar el servidor.
-    """
     try:
         if not (ARCH_MODELO.exists() and ARCH_LABEL.exists() and
                 ARCH_SCALER.exists() and ARCH_METADATA.exists()):
@@ -760,6 +1078,8 @@ def cargar_modelo_si_existe():
         meta = joblib.load(ARCH_METADATA)
         ESTADO["columnas_features"] = meta.get("columnas_features")
         ESTADO["pregunta_a_tipos"] = meta.get("pregunta_a_tipos")
+        if meta.get("pregunta_texto"):
+            ESTADO["pregunta_texto"] = meta.get("pregunta_texto")
         ESTADO["metricas"] = meta.get("metricas")
         ESTADO["entrenado"] = True
         print(f"✅ Modelo cargado desde ./{ARCH_MODELO.parent.name}/{ARCH_MODELO.name}")
@@ -842,18 +1162,17 @@ def construir_resumen_datasets():
     if ESTADO.get("df_entrenamiento") is not None:
         df = ESTADO["df_entrenamiento"]
         resumen["dataset_sintetico_entrenamiento"] = {
-            "tipo": "sintético",
+            "tipo": "sintético (Verdadero/Falso)",
             "filas": int(df.shape[0]),
             "columnas": int(df.shape[1] - 1),
             "target_distribucion": dict(Counter(df["target"])),
         }
     else:
         resumen["dataset_sintetico_entrenamiento"] = {
-            "tipo": "sintético",
+            "tipo": "sintético (Verdadero/Falso)",
             "estado": "se genera al entrenar",
         }
 
-    # --- NUEVO: reflejar ./datasets_created/ en el resumen ---
     try:
         if RUTA_DATASETS_GEN.exists():
             archivos_gen = sorted([p.name for p in RUTA_DATASETS_GEN.iterdir() if p.is_file()])
@@ -861,14 +1180,23 @@ def construir_resumen_datasets():
             rd = RUTA_DATASETS_GEN / "respaldos"
             if rd.exists():
                 respaldos_gen = sorted([p.name for p in rd.iterdir() if p.is_file()])
-            resumen["datasets_created/"] = {
+            resumen["violence-datasets/"] = {
                 "tipo": "salida del entrenamiento",
                 "archivos": archivos_gen,
                 "respaldos_con_timestamp": len(respaldos_gen),
                 "ultimo_respaldo": respaldos_gen[-1] if respaldos_gen else "(ninguno)",
             }
+
+            por_violencia_dir = RUTA_DATASETS_GEN / "por_violencia"
+            if por_violencia_dir.exists():
+                archivos_por_violencia = sorted([
+                    p.name for p in por_violencia_dir.iterdir()
+                    if p.is_file() and p.suffix == ".json"
+                    and "_metadata" not in p.name and "_resumen" not in p.name
+                ])
+                resumen["violence-datasets/"]["datasets_por_violencia"] = archivos_por_violencia
     except Exception as e:
-        resumen["datasets_created/"] = {"error": str(e)}
+        resumen["violence-datasets/"] = {"error": str(e)}
 
     ESTADO["resumen_datasets"] = resumen
     return resumen
@@ -1102,16 +1430,26 @@ HTML_PANEL = """
       {% else %}
       <ul class="lista-resumen">
         {% for k, v in meta.items() %}
-          {% if k not in ('detalle','detalle_niveles','target_distribucion','error','archivos') %}
+          {% if k not in ('detalle','detalle_niveles','target_distribucion','error','archivos','datasets_por_violencia') %}
           <li><b>{{ k }}:</b> {{ v }}</li>
           {% endif %}
         {% endfor %}
       </ul>
       {% if meta.archivos %}
       <details style="margin-top:10px;">
-        <summary>Ver archivos en datasets_created/</summary>
+        <summary>Ver archivos en violence-datasets/</summary>
         <ul class="lista-resumen" style="margin-top:8px;">
           {% for a in meta.archivos %}
+          <li>{{ a }}</li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+      {% if meta.datasets_por_violencia %}
+      <details style="margin-top:10px;">
+        <summary>Ver datasets individuales por violencia ({{ meta.datasets_por_violencia|length }})</summary>
+        <ul class="lista-resumen" style="margin-top:8px;">
+          {% for a in meta.datasets_por_violencia %}
           <li>{{ a }}</li>
           {% endfor %}
         </ul>
@@ -1156,6 +1494,12 @@ HTML_PANEL = """
 
 <div class="card">
   <h2>4. Configuración del entrenamiento</h2>
+  <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">
+    📦 Cada entrenamiento genera <b>datasets MASIVOS</b> (~18000 registros) en <code>./violence-datasets/</code>.
+    Cada celda se marca como <b>Verdadero</b> o <b>Falso</b>. El campo <code>target</code> se <b>deriva del patrón
+    de respuestas</b> y se acompaña del <b>nombre oficial</b>, la <b>categoría</b>, la <b>definición</b>,
+    los <b>tipos activados</b> y el <b>nivel de activación</b>.
+  </p>
   <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
     <label style="font-size:14px;font-weight:600;">Número de árboles:
       <input type="number" id="arboles" value="200" min="10" max="1000" step="10" style="margin-left:8px;">
@@ -1207,6 +1551,7 @@ HTML_TEST = """
   <h2>Test de victimización (100 preguntas)</h2>
   <div class="aviso aviso-info">
     Responde con sinceridad. Cada respuesta se analiza contra los tipos e indicadores oficiales de los JSON.
+    Puedes marcar Verdadero en tantas preguntas como correspondan, incluso si pertenecen a distintos tipos de violencia.
   </div>
   <form id="formulario">
     {% for s in secciones %}
@@ -1475,20 +1820,9 @@ def _puntaje_por_tipo(data, le, proba_modelo):
 
 
 def _indicadores_activados(data):
-    """
-    Selecciona hasta 15 indicadores que MEJOR se ajusten a las respuestas del test.
-    A diferencia de la versión anterior, NO se queda con los primeros tipos
-    ordenados por peso, sino que puntúa cada indicador según:
-      1. El peso real del tipo/categoría a la que pertenece (activaciones / total).
-      2. La intensidad de las respuestas en las preguntas asociadas a ese tipo.
-      3. Un pequeño factor de diversidad para no saturar con un solo tipo.
-    Luego elige los 15 indicadores con mayor puntaje, garantizando variación
-    según las respuestas.
-    """
     pregunta_a_tipos = ESTADO["pregunta_a_tipos"]
     tipos_unicos = ESTADO["tipos_unicos"]
 
-    # ---------- 1. Calcular activaciones por tipo (igual que antes) ----------
     activaciones_por_tipo = defaultdict(int)
     total_preguntas_por_tipo = defaultdict(int)
 
@@ -1497,21 +1831,18 @@ def _indicadores_activados(data):
             total_preguntas_por_tipo[t] += 1
 
     for c, val in data.items():
-        if val >= 1:                     # incluir "Una vez" para dar matices
+        if val >= 1:
             for t in pregunta_a_tipos.get(c, []):
                 activaciones_por_tipo[t] += val
 
-    # ---------- 2. Normalizar peso por tipo ----------
     peso_por_tipo = {}
     for t in tipos_unicos:
         total = total_preguntas_por_tipo.get(t, 0)
         if total > 0:
-            # intensidad máxima posible: 4 (Actualmente) * total
             peso_por_tipo[t] = min(1.0, activaciones_por_tipo.get(t, 0) / (4.0 * total))
         else:
             peso_por_tipo[t] = 0.0
 
-    # ---------- 3. Puntuar cada indicador ----------
     puntajes_indicadores = []
 
     for ind in ESTADO["indicadores_catalogo"]:
@@ -1519,33 +1850,26 @@ def _indicadores_activados(data):
         if not tipos_ind:
             continue
 
-        # peso base: promedio de pesos de los tipos que cubre el indicador
         peso_tipos = [peso_por_tipo.get(t, 0.0) for t in tipos_ind]
         peso_promedio = sum(peso_tipos) / len(peso_tipos) if peso_tipos else 0.0
 
-        # si el indicador no toca ningún tipo con activación, se descarta
         if peso_promedio <= 0.0:
             continue
 
-        # factor de especificidad: indicadores cuyo tipo principal está más activado
         peso_max = max(peso_tipos) if peso_tipos else 0.0
 
-        # factor de categoría: cuánto se activó la categoría del indicador
         cat_num = ind.get("categoria_num", 0)
         tipos_cat = ESTADO["mapa_categoria_a_tipos"].get(cat_num, [])
         activaciones_cat = sum(activaciones_por_tipo.get(t, 0) for t in tipos_cat)
         total_cat = sum(total_preguntas_por_tipo.get(t, 0) for t in tipos_cat)
         peso_categoria = min(1.0, activaciones_cat / (4.0 * total_cat)) if total_cat else 0.0
 
-        # PUNTAJE FINAL del indicador
         puntaje = (
-            0.50 * peso_max +          # qué tan activado está el tipo principal
-            0.30 * peso_promedio +     # cobertura de tipos
-            0.20 * peso_categoria      # relevancia de la categoría completa
+            0.50 * peso_max +
+            0.30 * peso_promedio +
+            0.20 * peso_categoria
         )
 
-        # Pequeño bonus si alguna respuesta fue "Actualmente" (valor 4) en una
-        # pregunta directamente vinculada al tipo principal del indicador.
         tipos_set = set(tipos_ind)
         for c, val in data.items():
             if val >= 4 and tipos_set.intersection(pregunta_a_tipos.get(c, [])):
@@ -1554,12 +1878,10 @@ def _indicadores_activados(data):
 
         puntajes_indicadores.append((puntaje, ind))
 
-    # ---------- 4. Ordenar y seleccionar top 15 con diversidad ----------
     puntajes_indicadores.sort(key=lambda x: -x[0])
 
     seleccionados = []
     vistos_ids = set()
-    # Primera pasada: máximo 3 indicadores por categoría para garantizar variedad
     conteo_categoria = defaultdict(int)
     for puntaje, ind in puntajes_indicadores:
         cat = ind.get("categoria_num", 0)
@@ -1573,7 +1895,6 @@ def _indicadores_activados(data):
         if len(seleccionados) >= 15:
             break
 
-    # Segunda pasada: si aún no hay 15, completar con los mejores restantes
     if len(seleccionados) < 15:
         for puntaje, ind in puntajes_indicadores:
             if ind["id"] in vistos_ids:
@@ -1707,7 +2028,8 @@ if __name__ == "__main__":
     print("   - ./modelos/")
     print("   - ./reportes/")
     print("   - ./respaldos/")
-    print("   - ./datasets_created/")
+    print("   - ./violence-datasets/                 (datasets MASIVOS Verdadero/Falso)")
+    print("   - ./violence-datasets/por_violencia/   (un dataset masivo por violencia derivada)")
 
     faltan = archivos_faltantes()
     if faltan:
