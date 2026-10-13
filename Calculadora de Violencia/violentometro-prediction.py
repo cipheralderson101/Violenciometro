@@ -3,7 +3,8 @@ Sistema de Predicción de Violencia contra la Mujer.
 Lee los 3 JSON desde ./datasets/ (violentometro, tipos, indicadores).
 El test de victimización está embebido en el script y NO se sube.
 
-Portable: se puede ejecutar desde cualquier carpeta. Genera automáticamente:
+Portable: se ejecuta desde cualquier carpeta y trabaja SIEMPRE en la carpeta
+actual (Path.cwd()). Crea automáticamente, junto a donde se ejecute:
     ./datasets/   ./modelos/   ./reportes/   ./respaldos/   ./datasets_created/
 
 Los porcentajes se muestran siempre con 2 decimales.
@@ -39,9 +40,9 @@ from flask import (
 )
 
 # ============================================================
-# 1. CARPETAS (portables: relativas al script)
+# 1. CARPETAS (portables: relativas a la carpeta de ejecución)
 # ============================================================
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path.cwd()
 
 RUTA_DATOSETS       = BASE_DIR / "datasets"
 RUTA_MODELOS        = BASE_DIR / "modelos"
@@ -49,8 +50,7 @@ RUTA_REPORTES       = BASE_DIR / "reportes"
 RUTA_RESPALDO       = BASE_DIR / "respaldos"
 RUTA_DATASETS_GEN   = BASE_DIR / "datasets_created"
 
-for r in (BASE_DIR, RUTA_DATOSETS, RUTA_MODELOS, RUTA_REPORTES,
-          RUTA_RESPALDO, RUTA_DATASETS_GEN):
+for r in (RUTA_DATOSETS, RUTA_MODELOS, RUTA_REPORTES, RUTA_RESPALDO, RUTA_DATASETS_GEN):
     r.mkdir(parents=True, exist_ok=True)
 
 ARCH_VIOLENTOMETRO = RUTA_DATOSETS / "violentometro.json"
@@ -652,7 +652,7 @@ def entrenar(n_arboles):
     # --- NUEVO: guardar el dataset generado en ./datasets_created/ (JSON) ---
     try:
         rutas_ds = guardar_dataset_generado(df, n_por_tipo=500)
-        log(f"💾 Dataset guardado en {RUTA_DATASETS_GEN}")
+        log(f"💾 Dataset guardado en {rutas_ds['json'].parent.name}/")
         log(f"   - JSON:   {rutas_ds['json'].name}")
         log(f"   - Meta:   {rutas_ds['metadata'].name}")
         if "respaldo_json" in rutas_ds:
@@ -762,7 +762,7 @@ def cargar_modelo_si_existe():
         ESTADO["pregunta_a_tipos"] = meta.get("pregunta_a_tipos")
         ESTADO["metricas"] = meta.get("metricas")
         ESTADO["entrenado"] = True
-        print(f"✅ Modelo cargado desde {ARCH_MODELO}")
+        print(f"✅ Modelo cargado desde ./{ARCH_MODELO.parent.name}/{ARCH_MODELO.name}")
         return True
     except Exception as e:
         print(f"⚠️ No se pudo cargar el modelo: {e}")
@@ -863,7 +863,6 @@ def construir_resumen_datasets():
                 respaldos_gen = sorted([p.name for p in rd.iterdir() if p.is_file()])
             resumen["datasets_created/"] = {
                 "tipo": "salida del entrenamiento",
-                "ruta": str(RUTA_DATASETS_GEN),
                 "archivos": archivos_gen,
                 "respaldos_con_timestamp": len(respaldos_gen),
                 "ultimo_respaldo": respaldos_gen[-1] if respaldos_gen else "(ninguno)",
@@ -1021,7 +1020,7 @@ HTML_PANEL = """
 <div class="card">
   <h2>1. Datos en ./datasets</h2>
   <p style="font-size:14px;color:var(--muted);margin-bottom:14px;">
-    La app busca automáticamente estos 3 archivos en <b>{{ datasets_dir }}</b>:
+    La app busca automáticamente estos 3 archivos en la carpeta <b>datasets/</b>:
   </p>
   <ul class="lista-resumen">
     {% for n in nombres_esperados %}
@@ -1032,7 +1031,7 @@ HTML_PANEL = """
     <div class="aviso aviso-ok" style="margin-top:14px;">✅ Los 3 JSON están presentes. Puedes entrenar directamente.</div>
   {% else %}
     <div class="aviso aviso-warn" style="margin-top:14px;">
-      ⚠️ Faltan archivos. Colócalos en <b>{{ datasets_dir }}</b> y recarga la página, o súbelos aquí:
+      ⚠️ Faltan archivos. Colócalos en <b>datasets/</b> (junto a este script) y recarga la página, o súbelos aquí:
     </div>
     <form method="post" action="/subir" enctype="multipart/form-data" style="margin-top:14px;">
       <input type="file" name="archivos" multiple accept=".json">
@@ -1310,7 +1309,6 @@ def panel():
             archivos_ok=archivos_presentes(),
             archivos_encontrados=[p.name for p in [ARCH_VIOLENTOMETRO, ARCH_TIPOS, ARCH_INDICADORES] if p.exists()],
             nombres_esperados=NOMBRES_ESPERADOS,
-            datasets_dir=str(RUTA_DATOSETS),
             metricas=ESTADO["metricas"],
             resumen=ESTADO["resumen_datasets"],
             violentometro=ESTADO.get("violentometro_oficial"),
@@ -1349,7 +1347,7 @@ def iniciar_entrenamiento():
     if ESTADO["entrenando"]:
         return jsonify({"error": "Ya hay un entrenamiento en curso"}), 400
     if not archivos_presentes():
-        return jsonify({"error": f"Faltan archivos en {RUTA_DATOSETS}"}), 400
+        return jsonify({"error": "Faltan archivos en datasets/"}), 400
     data = request.get_json() or {}
     n = int(data.get("arboles", 200))
     while not COLA_LOG.empty():
@@ -1703,19 +1701,20 @@ def abrir_navegador():
 if __name__ == "__main__":
     print("=" * 60)
     print("🌸 Sistema de Predicción de Violencia contra la Mujer")
-    print(f"📁 Carpeta de trabajo: {BASE_DIR}")
-    print(f"📁 Datasets: {RUTA_DATOSETS}")
-    print(f"📁 Modelos:  {RUTA_MODELOS}")
-    print(f"📁 Reportes: {RUTA_REPORTES}")
-    print(f"📁 Respaldos:{RUTA_RESPALDO}")
-    print(f"📁 Datasets generados: {RUTA_DATASETS_GEN}")
+    print(f"📁 Trabajando en: {BASE_DIR}")
+    print("📁 Carpetas de trabajo (relativas a la carpeta actual):")
+    print("   - ./datasets/")
+    print("   - ./modelos/")
+    print("   - ./reportes/")
+    print("   - ./respaldos/")
+    print("   - ./datasets_created/")
 
     faltan = archivos_faltantes()
     if faltan:
-        print(f"⚠️  Faltan en {RUTA_DATOSETS}: {', '.join(faltan)}")
+        print(f"⚠️  Faltan en ./datasets/: {', '.join(faltan)}")
         print("   Súbelos desde la interfaz o colócalos manualmente.")
     else:
-        print("✅ Los 3 JSON están presentes en datasets/")
+        print("✅ Los 3 JSON están presentes en ./datasets/")
         if intentar_carga_inicial():
             print("✅ Datos cargados automáticamente.")
         else:
