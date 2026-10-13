@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Resultado del Test</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='estilos.css') }}">
+</head>
+<body>
+
+<div class="encabezado">
+    <div class="logo-contenedor">
+        <img src="{{ url_for('static', filename='logo.png') }}" class="logo">
+        <h1 class="titulo-principal">Resultado del Test</h1>
+    </div>
+    <div class="linea-vino"></div>
+    <div class="gobierno-texto">Gobierno del Estado de México</div>
+</div>
+
+<div class="contenedor-formulario centrado">
+
+    <h2>Puntaje obtenido: {{ puntaje }}</h2>
+    <h2>Nivel de riesgo: <b>{{ nivel }}</b></h2>
+
+    <h3>Gráfica de barras</h3>
+    <img src="{{ url_for('static', filename=barras.replace('static/', '')) }}" width="300">
+
+    <h3>Gráfica de pastel</h3>
+    <img src="{{ url_for('static', filename=pastel.replace('static/', '')) }}" width="300">
+
+    {% if enviado %}
+    <p style="color: green; font-weight: bold;">✅ Tus respuestas fueron enviadas y guardadas correctamente.</p>
+    {% endif %}
+
+    <a href="/panel" class="btn">Regresar al menú</a>
+
+</div>
+
+</body>
+</html>

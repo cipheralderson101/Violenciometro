@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Inicio - App Mujer TESCHA</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <header>
+        <img src="{{ url_for('static', filename='logo.png') }}" alt="Logo" class="logo">
+        <h1>Bienvenidas a la App de Violencia contra las Mujeres del TESCHA</h1>
+        <p class="bienvenida">Esta plataforma fue creada para escucharte, orientarte y apoyarte con total confianza.</p>
+    </header>
+
+    <nav>
+        <a href="{{ url_for('inicio') }}">Inicio</a>
+        <a href="{{ url_for('test') }}">Cuestionario</a>
+        <a href="{{ url_for('historial') }}">Historial</a>
+        <a href="{{ url_for('emergencia') }}">Emergencia</a>
+        <a href="{{ url_for('acerca') }}">Acerca de</a>
+        <a href="{{ url_for('logout') }}">Cerrar Sesión</a>
+    </nav>
+
+    <main>
+        <h2>Bienvenida, {{ usuario }}</h2>
+        <p>Gracias por confiar en esta herramienta. Estamos aquí para apoyarte y acompañarte en cada paso.</p>
+    </main>
+</body>
+</html>

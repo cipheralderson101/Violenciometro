@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Realizar Test - App Mujer Segura</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='estilos.css') }}">
+    <style>
+        .contenedor { max-width:800px; margin:20px auto; padding:20px; background:#f9f9f9; border-radius:10px; box-shadow:0 0 10px rgba(0,0,0,0.1);}
+        h2 { text-align:center; color:#7a0010; margin-bottom:20px; }
+        .pregunta { margin-bottom:15px; font-weight:bold; }
+        .opciones { margin-left:20px; margin-bottom:10px; }
+        .btn { background:#7a0010; color:white; padding:10px 20px; text-decoration:none; border-radius:5px; margin:5px; display:inline-block; }
+        .btn:hover { background:#a5001f; }
+        input[type="radio"] { margin-right:10px; }
+    </style>
+</head>
+<body>
+
+<header class="encabezado">
+    <div class="logo-contenedor">
+        <img src="{{ url_for('static', filename='logo.png') }}" class="logo">
+        <h1 class="titulo-principal">Secretaría de Educación, Ciencia, Tecnología e Innovación</h1>
+    </div>
+    <div class="linea-vino"></div>
+    <div class="gobierno-texto">Gobierno del Estado de México</div>
+</header>
+
+
+<div class="contenedor">
+    <h2>Realizar Test de Evaluación</h2>
+
+    <form method="POST" action="{{ url_for('procesar_test') }}">
+
+        {% for pregunta in preguntas %}
+        <div class="pregunta">
+            {{ loop.index }}. {{ pregunta }}
+        </div>
+
+        <div class="opciones">
+            <label>
+                <input type="radio"
+                       name="respuesta_{{ loop.index0 }}"
+                       value="si"
+                       required>
+                Sí
+            </label>
+
+            <label>
+                <input type="radio"
+                       name="respuesta_{{ loop.index0 }}"
+                       value="no">
+                No
+            </label>
+        </div>
+        {% endfor %}
+
+        <div style="text-align:center;">
+            <button type="submit" class="btn">Enviar Test</button>
+            <a href="{{ url_for('menu') }}" class="btn">Volver al Menú</a>
+        </div>
+
+    </form>
+</div>
+
+</body>
+</html>

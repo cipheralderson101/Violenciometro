@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Menú - App Mujer Segura</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='estilos.css') }}">
+</head>
+<body>
+<header class="encabezado">
+    <div class="logo-texto">
+        <img src="{{ url_for('static', filename='logo.png') }}" class="logo">
+        <h1 class="titulo-principal">Secretaría de Educación, Ciencia, Tecnología e Innovación</h1>
+    </div>
+    <div class="linea-vino"></div>
+    <div class="gobierno-texto">Gobierno del Estado de México</div>
+</header>
+
+<div class="contenedor-formulario">
+    <h2 class="centrado">Bienvenida, {{ nombre }}!</h2>
+
+    <div class="menu-botones">
+        <a href="{{ url_for('realizar_test') }}" class="btn">Test</a>
+        <a href="{{ url_for('historial') }}" class="btn">Historial</a>
+        <a href="{{ url_for('alertas') }}" class="btn">Alertas</a>
+        <a href="{{ url_for('logout') }}" class="btn btn-rojo">Cerrar Sesión</a>
+    </div>
+</div>
+</body>
+</html>

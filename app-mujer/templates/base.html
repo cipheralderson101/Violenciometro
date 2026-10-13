@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ titulo }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style/estilo.css') }}">
+</head>
+<body>
+
+    <header class="encabezado">
+        <div class="contenedor-superior">
+            <div class="logo-contenedor">
+                <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Logo" class="logo">
+                <div class="texto-encabezado">
+                    <h1>Secretaría de Educación, Ciencia, Tecnología e Innovación</h1>
+                </div>
+            </div>
+
+            <!-- Línea vino -->
+            <div class="linea-vino"></div>
+
+            <!-- Texto Gobierno del Estado de México -->
+            <div class="gobierno-texto">
+                <p>Gobierno del Estado de México</p>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        {% block contenido %}{% endblock %}
+    </main>
+
+</body>
+</html>

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Historial - App Mujer Segura</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='estilos.css') }}">
+    <style>
+        .semaforo { font-weight:bold; padding:5px 10px; border-radius:5px; color:white; }
+        .bajo { background: green; }
+        .medio { background: orange; }
+        .alto { background: red; }
+        table { width:100%; border-collapse: collapse; margin-bottom: 20px; }
+        th, td { border:1px solid #ccc; padding:8px; text-align:center; }
+        th { background:#7a0010; color:white; }
+        .btn { padding:5px 10px; text-decoration:none; background:#f5c242; color:#7a0010; border-radius:5px; font-weight:bold; }
+        .centrado { text-align:center; margin:20px 0; }
+    </style>
+</head>
+<body>
+
+<header class="encabezado">
+    <div class="logo-contenedor">
+        <img src="{{ url_for('static', filename='logo.png') }}" class="logo">
+        <h1 class="titulo-principal">Secretaría de Educación, Ciencia, Tecnología e Innovación</h1>
+    </div>
+    <div class="linea-vino"></div>
+    <div class="gobierno-texto">Gobierno del Estado de México</div>
+</header>
+
+<div class="contenedor-formulario">
+    <!-- HISTORIAL DE TESTS -->
+    <h2 class="centrado">Historial de Tests</h2>
+    <table>
+        <tr>
+            <th>Fecha</th>
+            <th>Puntaje</th>
+            <th>Nivel</th>
+            <th>Consejo</th>
+            <th>Ver Gráfica</th>
+        </tr>
+        {% for t in tests %}
+        <tr>
+            <td>{{ t.fecha.strftime("%d/%m/%Y %H:%M") }}</td>
+            <td>{{ t.puntaje }}</td>
+            <td>
+                {% if t.puntaje <= 6 %}
+                    <span class="semaforo bajo">BAJO 😊</span>
+                {% elif t.puntaje <= 13 %}
+                    <span class="semaforo medio">MEDIO 😐</span>
+                {% else %}
+                    <span class="semaforo alto">ALTO 😡</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if t.puntaje <= 6 %}
+                    ¡Bien! Tu situación parece estable.
+                {% elif t.puntaje <= 13 %}
+                    Alerta: presta atención a señales de control o violencia.
+                {% else %}
+                    Peligro: busca apoyo inmediato.
+                {% endif %}
+            </td>
+            <td>
+                <a href="{{ url_for('grafico_test', test_id=t.id) }}" class="btn">Ver gráfico</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <!-- HISTORIAL DE ALERTAS -->
+    <h2 class="centrado">Historial de Alertas</h2>
+    <table>
+        <tr>
+            <th>Fecha</th>
+            <th>Descripción</th>
+            <th>Latitud</th>
+            <th>Longitud</th>
+            <th>Archivo</th>
+        </tr>
+        {% for a in alertas %}
+        <tr>
+            <td>{{ a.fecha.strftime("%d/%m/%Y %H:%M") }}</td>
+            <td>{{ a.descripcion }}</td>
+            <td>{{ a.latitud }}</td>
+            <td>{{ a.longitud }}</td>
+            <td>
+                {% if a.archivo %}
+                    <a href="{{ url_for('static', filename='evidencia/' + a.archivo) }}" target="_blank">Ver</a>
+                {% else %}
+                    -
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <!-- GRÁFICA ACUMULATIVA DE TESTS -->
+    {% if grafica_acumulativa %}
+    <h2 class="centrado">Evolución de tus Tests</h2>
+    <img src="data:image/png;base64,{{ grafica_acumulativa }}" style="max-width:100%;">
+    {% endif %}
+
+    <div style="text-align:center; margin-top:20px;">
+        <a href="{{ url_for('realizar_test') }}" class="btn">Repetir Test</a>
+        <a href="{{ url_for('menu') }}" class="btn">Volver al Menú</a>
+    </div>
+</div>
+
+</body>
+</html>
